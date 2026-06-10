@@ -207,15 +207,15 @@ function renderBrief(){
   }
   $("briefBody").innerHTML = rows.map(([k,v,cls]) =>
     `<div class="brief-row"><span class="k">${k}</span><span class="v ${cls||""}">${v}</span></div>`).join("");
-  $("budget").textContent = "/ $"+c.budget+"k budget";
+  $("budget").textContent = "/ $"+c.budget+"k target";
   $("shoreNote").textContent = "−"+SHORE_CUT+" NM to datum · +$"+SHORE_COST+"k";
   // objective strip
   const obj = $("objective");
   obj.className = "objective " + state.mode;
   if(state.mode==="sar"){
-    obj.innerHTML = `<span class="tag">Objective</span><span>Field drones within your <b>$${c.budget}k</b> budget to cover the search area and <b>locate the lost sailor</b> before the ~${Math.round(c.window)} min survival window runs out.</span>`;
+    obj.innerHTML = `<span class="tag">Objective</span><span><b>Locate the lost sailor</b> before the ~${Math.round(c.window)} min survival window runs out. Spend what you need — but a lean, fast rescue near the <b>$${c.budget}k</b> target scores highest.</span>`;
   } else {
-    obj.innerHTML = `<span class="tag">Objective</span><span>Spend up to <b>$${c.budget}k</b> on the right sensors to <b>detect and track the submarine</b> before it slips the search area (~${Math.round(c.window)} min).</span>`;
+    obj.innerHTML = `<span class="tag">Objective</span><span><b>Detect and track the submarine</b> before it slips the search area (~${Math.round(c.window)} min). Field whatever it takes — efficiency near the <b>$${c.budget}k</b> target wins the leaderboard.</span>`;
   }
 }
 
@@ -263,7 +263,7 @@ function renderPlan(){
   if(a.total === 0){
     msg = "Select drones to build a plan. Watch the detection estimate climb as you add coverage.";
   } else if(over){
-    msg = "✕ Over budget by $"+(a.cost-c.budget)+"k. Trim the swarm or drop a forward shore launch.";
+    msg = "⚠ $"+(a.cost-c.budget)+"k over the target spend. You can still deploy — but overspending costs leaderboard points. Lean is good.";
   } else if(unreachable.length){
     const d = DRONES[unreachable[0]];
     msg = "⚠ "+d.name+" can't reach the datum (range "+Math.round(reachOneway(d))+" NM < "+a.D+" NM). " +
@@ -460,7 +460,6 @@ function sampleDetection(a){
 function deploy(){
   const a = analyze(state.loadout, state.mode, state.c, state.shore);
   if(a.total === 0){ flashAdvisory("Field at least one drone first."); return; }
-  if(a.cost > state.c.budget){ flashAdvisory("Over budget — trim the swarm."); return; }
   if(a.reachable === 0){ flashAdvisory("None of your drones can reach the datum."); return; }
 
   state.phase = "running";
@@ -624,17 +623,19 @@ const NAME_KEY = "talon_name";
 
 function computeScore(){
   const a = state.planAtDeploy, c = state.c;
+  // efficiency: spending under the target earns up to +2000; over it costs up to -2500
+  const effFrac = (c.budget - a.cost) / c.budget;          // >0 under target, <0 over
+  const effPts = Math.round(Math.max(-2500, Math.min(2000, effFrac * 2000)));
   if(detected){
     const base = 5000;
     const podPts = Math.round(a.POD*2500);
     const speedPts = Math.round(Math.max(0, 1 - detectAt/c.window) * 1800);
-    const leftover = Math.max(0, (c.budget - a.cost)/c.budget);
-    const budgetPts = Math.round(leftover * 1200);
-    return { total: base+podPts+speedPts+budgetPts, found:true,
-      parts:[["Target found",base],["Detection",podPts],["Speed",speedPts],["Budget saved",budgetPts]] };
+    return { total: Math.max(0, base+podPts+speedPts+effPts), found:true,
+      parts:[["Target found",base],["Detection",podPts],["Speed",speedPts],["Efficiency",effPts]] };
   }
   const podPts = Math.round(a.POD*1200);
-  return { total: podPts, found:false, parts:[["Plan quality (not found)",podPts]] };
+  return { total: Math.max(0, podPts+Math.min(0,effPts)), found:false,
+    parts:[["Plan quality (not found)",podPts],["Efficiency",Math.min(0,effPts)]] };
 }
 
 function lbLocal(){ try { return JSON.parse(localStorage.getItem(LB_KEY)) || {sar:[],asw:[]}; } catch(e){ return {sar:[],asw:[]}; } }
@@ -731,7 +732,11 @@ function debrief(){
   lastSubmittedTs = null;
   animateScore(lastScore.total);
   $("scoreBreak").innerHTML = lastScore.parts
-    .map(([k,v]) => `${k} <span class="${v>0?'pos':''}">+${v.toLocaleString()}</span>`).join("<br>");
+    .map(([k,v]) => {
+      const sign = v < 0 ? "−" : "+";
+      const cls = v < 0 ? "neg" : (v > 0 ? "pos" : "");
+      return `${k} <span class="${cls}">${sign}${Math.abs(v).toLocaleString()}</span>`;
+    }).join("<br>");
   const savedName = localStorage.getItem(NAME_KEY) || "";
   $("playerName").value = savedName;
   $("submitRow").style.display = "flex";
@@ -778,7 +783,9 @@ function coachTip(a, best, c){
   const had = state.loadout, opt = best.loadout;
   const unreachableSpend = ORDER.some(k => (had[k]||0) && reachOneway(DRONES[k]) < a.D);
   if(unreachableSpend)
-    return "You spent on drones that couldn't reach the datum — wasted budget. Check the range flag before deploying.";
+    return "You spent on drones that couldn't reach the datum — wasted money. Check the range flag before deploying.";
+  if(a.cost > c.budget*1.15)
+    return "You found them — but $"+(a.cost-c.budget)+"k over the target. The leaderboard rewards lean rescues: trim to the cheapest swarm that still covers the area.";
   if(state.mode==="asw" && c.posture==="quiet" && (had.sentinel||0) < (opt.sentinel||0))
     return "Against a silent boat, sonobuoys go deaf — the MAD boom on SENTINEL-L is what closes the gap.";
   if(state.mode==="asw" && c.posture==="snorkel" && (had.sentinel||0) > (opt.sentinel||0))

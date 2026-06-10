@@ -214,3 +214,6 @@
 .lb-table tr.you td { background:rgba(255,176,32,0.07); }
 .lb-table tr.you td.nm { color:var(--amber); }
 .lb-empty { color:var(--ink-faint); font-family:var(--mono); font-size:.84rem; padding:20px 0; text-align:center; }
+
+.score-box .score-sub span.pos { color:var(--sonar); }
+.score-box .score-sub span.neg { color:var(--rescue); }
