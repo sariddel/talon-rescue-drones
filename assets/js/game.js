@@ -617,7 +617,7 @@ function flashAdvisory(msg){
  * ---------------------------------------------------------- */
 // Set LB_API to the deployed Cloudflare Worker URL to make the board GLOBAL.
 // Empty string => the board is stored locally in this browser only.
-const LB_API = "";
+const LB_API = "https://talon-leaderboard.sariddel.workers.dev";
 const LB_KEY = "talon_lb_v1";
 const NAME_KEY = "talon_name";
 
