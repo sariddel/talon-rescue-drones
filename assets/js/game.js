@@ -209,6 +209,14 @@ function renderBrief(){
     `<div class="brief-row"><span class="k">${k}</span><span class="v ${cls||""}">${v}</span></div>`).join("");
   $("budget").textContent = "/ $"+c.budget+"k budget";
   $("shoreNote").textContent = "−"+SHORE_CUT+" NM to datum · +$"+SHORE_COST+"k";
+  // objective strip
+  const obj = $("objective");
+  obj.className = "objective " + state.mode;
+  if(state.mode==="sar"){
+    obj.innerHTML = `<span class="tag">Objective</span><span>Field drones within your <b>$${c.budget}k</b> budget to cover the search area and <b>locate the lost sailor</b> before the ~${Math.round(c.window)} min survival window runs out.</span>`;
+  } else {
+    obj.innerHTML = `<span class="tag">Objective</span><span>Spend up to <b>$${c.budget}k</b> on the right sensors to <b>detect and track the submarine</b> before it slips the search area (~${Math.round(c.window)} min).</span>`;
+  }
 }
 
 function renderFleet(){
@@ -606,6 +614,62 @@ function flashAdvisory(msg){
 }
 
 /* ---------------------------------------------------------- *
+ *  8b. SCORING + LEADERBOARD
+ * ---------------------------------------------------------- */
+// Set LB_API to the deployed Cloudflare Worker URL to make the board GLOBAL.
+// Empty string => the board is stored locally in this browser only.
+const LB_API = "";
+const LB_KEY = "talon_lb_v1";
+const NAME_KEY = "talon_name";
+
+function computeScore(){
+  const a = state.planAtDeploy, c = state.c;
+  if(detected){
+    const base = 5000;
+    const podPts = Math.round(a.POD*2500);
+    const speedPts = Math.round(Math.max(0, 1 - detectAt/c.window) * 1800);
+    const leftover = Math.max(0, (c.budget - a.cost)/c.budget);
+    const budgetPts = Math.round(leftover * 1200);
+    return { total: base+podPts+speedPts+budgetPts, found:true,
+      parts:[["Target found",base],["Detection",podPts],["Speed",speedPts],["Budget saved",budgetPts]] };
+  }
+  const podPts = Math.round(a.POD*1200);
+  return { total: podPts, found:false, parts:[["Plan quality (not found)",podPts]] };
+}
+
+function lbLocal(){ try { return JSON.parse(localStorage.getItem(LB_KEY)) || {sar:[],asw:[]}; } catch(e){ return {sar:[],asw:[]}; } }
+function lbIsGlobal(){ return !!LB_API; }
+
+async function lbGet(mode){
+  if(LB_API){
+    try{
+      const r = await fetch(LB_API+"/board?mode="+mode, {cache:"no-store"});
+      if(r.ok) return await r.json();
+    }catch(e){}
+  }
+  return (lbLocal()[mode]||[]).slice().sort((a,b)=>b.score-a.score).slice(0,25);
+}
+
+async function lbSubmit(entry){
+  if(LB_API){
+    try{
+      // text/plain keeps it a CORS "simple request" (no preflight)
+      const r = await fetch(LB_API+"/score", {method:"POST", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(entry)});
+      if(r.ok) return await r.json();
+    }catch(e){}
+  }
+  const all = lbLocal();
+  all[entry.mode] = all[entry.mode]||[];
+  all[entry.mode].push(entry);
+  all[entry.mode].sort((a,b)=>b.score-a.score);
+  all[entry.mode] = all[entry.mode].slice(0,50);
+  localStorage.setItem(LB_KEY, JSON.stringify(all));
+  return all[entry.mode].slice(0,25);
+}
+
+let lastScore = null, lastSubmittedTs = null;
+
+/* ---------------------------------------------------------- *
  *  9. DEBRIEF
  * ---------------------------------------------------------- */
 function finishMission(){
@@ -662,7 +726,51 @@ function debrief(){
   }
   g.className = "grade "+cls; g.innerHTML = txt;
 
+  // ---- score + leaderboard submit ----
+  lastScore = computeScore();
+  lastSubmittedTs = null;
+  animateScore(lastScore.total);
+  $("scoreBreak").innerHTML = lastScore.parts
+    .map(([k,v]) => `${k} <span class="${v>0?'pos':''}">+${v.toLocaleString()}</span>`).join("<br>");
+  const savedName = localStorage.getItem(NAME_KEY) || "";
+  $("playerName").value = savedName;
+  $("submitRow").style.display = "flex";
+  $("submitScore").disabled = false;
+  $("submitScore").textContent = "Submit score";
+  $("submitStatus").textContent = "";
+
   $("modalBack").classList.add("show");
+}
+
+function animateScore(target){
+  const el = $("missionScore");
+  let cur = 0; const steps = 28, inc = target/steps; let i = 0;
+  const tick = () => {
+    i++; cur = Math.min(target, Math.round(inc*i));
+    el.textContent = cur.toLocaleString();
+    if(i < steps) requestAnimationFrame(tick);
+    else el.textContent = target.toLocaleString();
+  };
+  tick();
+}
+
+async function submitScore(){
+  if(!lastScore) return;
+  let name = ($("playerName").value || "").trim().replace(/[<>]/g,"").slice(0,14);
+  if(!name){ $("playerName").focus(); $("submitStatus").textContent = "enter a name"; return; }
+  localStorage.setItem(NAME_KEY, name);
+  const entry = {
+    name, mode: state.mode, score: lastScore.total,
+    found: lastScore.found, time: detected ? Math.round(detectAt) : null,
+    pod: Math.round(state.planAtDeploy.POD*100), ts: Date.now()
+  };
+  lastSubmittedTs = entry.ts;
+  $("submitScore").disabled = true; $("submitScore").textContent = "Submitting…";
+  $("submitStatus").textContent = "";
+  await lbSubmit(entry);
+  $("submitScore").textContent = "✓ Submitted";
+  $("submitStatus").textContent = "";
+  openLeaderboard(state.mode);
 }
 
 function coachTip(a, best, c){
@@ -709,6 +817,50 @@ function setMode(mode){
 }
 
 /* ---------------------------------------------------------- *
+ *  10b. LEADERBOARD + HOW-TO-PLAY MODALS
+ * ---------------------------------------------------------- */
+let lbMode = "sar";
+
+async function openLeaderboard(mode){
+  lbMode = mode || lbMode;
+  $("lbTabSar").classList.toggle("active", lbMode==="sar");
+  $("lbTabAsw").classList.toggle("active", lbMode==="asw");
+  $("lbScope").innerHTML = lbIsGlobal()
+    ? `<span class="badge">● GLOBAL</span> — everyone who plays competes on this board.`
+    : `<span class="badge local">● LOCAL</span> — saved in this browser only. (Ask Shaun to enable the global board.)`;
+  $("lbBack").classList.add("show");
+  $("lbBody").innerHTML = `<div class="lb-empty">Loading…</div>`;
+  const rows = await lbGet(lbMode);
+  renderLbTable(rows);
+}
+
+function renderLbTable(rows){
+  if(!rows || !rows.length){
+    $("lbBody").innerHTML = `<div class="lb-empty">No scores yet — be the first.</div>`;
+    return;
+  }
+  const body = rows.slice(0,25).map((r,i) => {
+    const you = (r.ts && r.ts===lastSubmittedTs) ? " class=\"you\"" : "";
+    const res = r.found
+      ? `<span class="ok">✓ ${r.time!=null?r.time+"m":"found"}</span>`
+      : `<span class="no">✕ lost</span>`;
+    const nm = (r.name||"ANON").replace(/[<>]/g,"");
+    return `<tr${you}>
+      <td class="rank">${i+1}</td>
+      <td class="nm">${nm}</td>
+      <td class="res">${res}</td>
+      <td class="sc">${(r.score||0).toLocaleString()}</td>
+    </tr>`;
+  }).join("");
+  $("lbBody").innerHTML = `<table class="lb-table">
+    <thead><tr><th>#</th><th>Player</th><th>Result</th><th>Score</th></tr></thead>
+    <tbody>${body}</tbody></table>`;
+}
+
+function openHowTo(){ $("htpBack").classList.add("show"); }
+function closeHowTo(){ $("htpBack").classList.remove("show"); localStorage.setItem("talon_seen_htp","1"); }
+
+/* ---------------------------------------------------------- *
  *  11. EVENTS
  * ---------------------------------------------------------- */
 $("fleet").addEventListener("click", e => {
@@ -743,9 +895,26 @@ $("nextScenario").addEventListener("click", ()=>{
   newScenario();
 });
 
+// score submit + leaderboard
+$("submitScore").addEventListener("click", submitScore);
+$("playerName").addEventListener("keydown", e => { if(e.key==="Enter") submitScore(); });
+$("showLb").addEventListener("click", ()=> openLeaderboard(state.mode));
+$("lbClose").addEventListener("click", ()=> $("lbBack").classList.remove("show"));
+$("lbTabSar").addEventListener("click", ()=> openLeaderboard("sar"));
+$("lbTabAsw").addEventListener("click", ()=> openLeaderboard("asw"));
+$("lbBack").addEventListener("click", e => { if(e.target===$("lbBack")) $("lbBack").classList.remove("show"); });
+
+// how to play
+$("howto").addEventListener("click", openHowTo);
+$("htpClose").addEventListener("click", closeHowTo);
+$("htpStart").addEventListener("click", closeHowTo);
+$("htpBack").addEventListener("click", e => { if(e.target===$("htpBack")) closeHowTo(); });
+
 /* ---------------------------------------------------------- *
  *  12. BOOT
  * ---------------------------------------------------------- */
 setMode("sar");
+// show the rules automatically on a player's first visit
+if(!localStorage.getItem("talon_seen_htp")) openHowTo();
 
 })();

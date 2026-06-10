@@ -1,0 +1,11 @@
+name = "talon-leaderboard"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# KV namespace holding the leaderboard JSON.
+# The id is filled in automatically by deploy.sh (or run:
+#   wrangler kv namespace create TALON_LB
+# and paste the returned id below).
+kv_namespaces = [
+  { binding = "TALON_LB", id = "PUT_KV_ID_HERE" }
+]

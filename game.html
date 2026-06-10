@@ -44,11 +44,19 @@
         <h1>Rescue Simulator</h1>
         <p class="muted">Someone is out there and the clock is running. Build the most effective drone swarm your budget allows — too few and you never cover the area, too expensive and you can't field enough. Then deploy and watch search theory play out.</p>
       </div>
-      <div class="modes" role="tablist" aria-label="Mission mode">
-        <button class="mode-tab sar active" id="modeSar" role="tab"><span class="dot"></span>Lost Sailor · SAR</button>
-        <button class="mode-tab asw" id="modeAsw" role="tab"><span class="dot"></span>Submarine · ASW</button>
+      <div class="head-right">
+        <div class="modes" role="tablist" aria-label="Mission mode">
+          <button class="mode-tab sar active" id="modeSar" role="tab"><span class="dot"></span>Lost Sailor · SAR</button>
+          <button class="mode-tab asw" id="modeAsw" role="tab"><span class="dot"></span>Submarine · ASW</button>
+        </div>
+        <div class="head-actions">
+          <button class="btn btn-ghost btn-sm" id="howto">？ How to play</button>
+          <button class="btn btn-ghost btn-sm" id="showLb">🏆 Leaderboard</button>
+        </div>
       </div>
     </div>
+
+    <div class="objective" id="objective"></div>
 
     <div class="sim-grid">
       <!-- STAGE -->
@@ -152,10 +160,67 @@
       <div class="s"><strong id="sPod">—</strong><span>Detection prob.</span></div>
     </div>
     <div class="grade" id="grade"></div>
+
+    <div class="score-box">
+      <div class="score-main"><span class="lbl">Mission score</span><strong id="missionScore">0</strong></div>
+      <div class="score-sub" id="scoreBreak"></div>
+    </div>
+    <div class="submit-row" id="submitRow">
+      <input id="playerName" maxlength="14" placeholder="Your name / initials" autocomplete="off" />
+      <button class="btn btn-sonar" id="submitScore">Submit score</button>
+      <span class="submit-status" id="submitStatus"></span>
+    </div>
+
     <div class="modal-actions">
       <button class="btn btn-ghost" id="replay">⟳ Re-plan &amp; retry</button>
       <button class="btn btn-primary" id="nextScenario">▸ New scenario</button>
     </div>
+  </div>
+</div>
+
+<!-- HOW TO PLAY MODAL -->
+<div class="modal-back" id="htpBack">
+  <div class="modal wide">
+    <button class="mclose" id="htpClose" aria-label="close">×</button>
+    <h2 class="mtitle">How to play</h2>
+    <p class="vsub">You're the search commander. Someone is in the water — or a submarine is closing on your ship. You have a fixed budget and a ticking clock. Spend wisely.</p>
+
+    <div class="htp-steps">
+      <div class="s"><div class="n">1</div><p><b>Pick a mission.</b> <b>Lost Sailor (SAR)</b> — find a survivor before the survival window closes. <b>Submarine (ASW)</b> — hold a track on a contact before it slips away.</p></div>
+      <div class="s"><div class="n">2</div><p><b>Read the briefing.</b> How far is the datum? Is it night? Rough seas? Is the sub running silent or snorkeling? Each condition changes which drone is the right buy.</p></div>
+      <div class="s"><div class="n">3</div><p><b>Field your swarm</b> with the + / − steppers, staying under budget. Watch the live <b>detection probability</b> — it updates as you add drones. A drone greyed-out with a ✕ <b>can't reach the datum</b>: wasted money.</p></div>
+      <div class="s"><div class="n">4</div><p><b>Deploy</b> and watch the search play out. You either find the target or run out of time. Then submit your <b>score</b> to the leaderboard.</p></div>
+    </div>
+
+    <div class="htp-tips">
+      <h4>The optimization — what wins</h4>
+      <ul>
+        <li><b>Coverage is everything.</b> Detection rises with how much sensor area you sweep over the search circle.</li>
+        <li><b>Far datum?</b> Cheap short-legged SCOUTs burn their fuel just getting there — buy range (RANGER / SENTINEL) or add a forward shore launch.</li>
+        <li><b>Night?</b> Thermal beats daylight cameras — lean on RANGER / SENTINEL.</li>
+        <li><b>Silent submarine?</b> Sonobuoys go deaf — only SENTINEL's MAD boom finds it. <b>Snorkeling?</b> It's exposed to radar — cheap swarms work.</li>
+        <li><b>Don't overspend.</b> Leftover budget and a fast find both boost your score. The best plan is rarely the most expensive one.</li>
+      </ul>
+      <div class="htp-formula">Coverage&nbsp;C = swept area ÷ search area&nbsp;&nbsp;·&nbsp;&nbsp;Detection = 1 − e<sup>−C</sup></div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:22px;">
+      <button class="btn btn-sonar" id="htpStart" style="flex:1;justify-content:center;">▸ Got it — let's go</button>
+    </div>
+  </div>
+</div>
+
+<!-- LEADERBOARD MODAL -->
+<div class="modal-back" id="lbBack">
+  <div class="modal wide">
+    <button class="mclose" id="lbClose" aria-label="close">×</button>
+    <h2 class="mtitle">🏆 Leaderboard</h2>
+    <div class="lb-modes">
+      <button class="lb-tab active" id="lbTabSar" data-m="sar">Lost Sailor · SAR</button>
+      <button class="lb-tab" id="lbTabAsw" data-m="asw">Submarine · ASW</button>
+    </div>
+    <div class="lb-scope" id="lbScope"></div>
+    <div id="lbBody"></div>
   </div>
 </div>
 
