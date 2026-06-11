@@ -42,7 +42,7 @@
       <div>
         <p class="kicker">Maritime search · optimization</p>
         <h1>Rescue Simulator</h1>
-        <p class="muted">Someone is out there and the clock is running. Build the most effective drone swarm your budget allows — too few and you never cover the area, too expensive and you can't field enough. Then deploy and watch search theory play out.</p>
+        <p class="muted">Build the right drone swarm, deploy, and find the target before the clock runs out. <button class="linklike" id="howtoInline">How to play ▸</button></p>
       </div>
       <div class="head-right">
         <div class="modes" role="tablist" aria-label="Mission mode">
@@ -52,6 +52,7 @@
         <div class="head-actions">
           <button class="btn btn-ghost btn-sm" id="howto">？ How to play</button>
           <button class="btn btn-ghost btn-sm" id="showLb">🏆 Leaderboard</button>
+          <button class="btn btn-ghost btn-sm" id="mute">🔊 Sound on</button>
         </div>
       </div>
     </div>
@@ -61,7 +62,8 @@
     <div class="sim-grid">
       <!-- STAGE -->
       <div class="stage-wrap">
-        <canvas id="stage" width="1520" height="1040"></canvas>
+        <canvas id="stage" width="1520" height="820"></canvas>
+        <div class="countdown" id="countdown"></div>
         <div class="hud">
           <div class="corner tl">
             <span class="lbl">Mission clock</span>
@@ -91,10 +93,11 @@
         <div class="card">
           <h3>Mission briefing <span class="pill" id="briefMode">SAR</span></h3>
           <div id="briefBody"></div>
+          <div class="brief-edge" id="briefEdge"></div>
         </div>
 
         <div class="card">
-          <h3>Field your swarm</h3>
+          <h3><span class="step-badge">1</span> Field your swarm <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400;font-size:.72rem;">— add with +, watch coverage</span></h3>
           <div class="fleet" id="fleet"></div>
           <div class="toggle-row" style="margin-top:6px;">
             <div class="tlabel">Forward shore launch
@@ -105,7 +108,7 @@
         </div>
 
         <div class="card">
-          <h3>Mission plan</h3>
+          <h3><span class="step-badge">2</span> Mission plan</h3>
           <div class="meter">
             <div class="bar"><div class="fill" id="budgetFill"></div></div>
             <div class="nums"><span class="spent" id="spent">$0k</span><span class="muted" id="budget">/ $0k budget</span></div>
@@ -149,11 +152,25 @@
   </div>
 </main>
 
+<!-- ALWAYS-VISIBLE ACTION DOCK -->
+<div class="action-dock">
+  <div class="dock-info">
+    <span class="dock-stat"><b id="dockPod">0%</b> detection</span>
+    <span class="dock-sep">·</span>
+    <span class="dock-stat"><span id="dockSpent">$0k</span> spent</span>
+  </div>
+  <button class="btn btn-sonar" id="deployDock">▸ Deploy swarm</button>
+</div>
+
 <!-- DEBRIEF MODAL -->
 <div class="modal-back" id="modalBack">
   <div class="modal">
-    <div class="verdict" id="verdict">—</div>
+    <div class="verdict-row">
+      <div class="verdict" id="verdict">—</div>
+      <div class="stars" id="stars"></div>
+    </div>
     <p class="vsub" id="verdictSub"></p>
+    <div class="plan-chips" id="planChips"></div>
     <div class="scoreline">
       <div class="s"><strong id="sTime">—</strong><span id="sTimeLbl">Time to find</span></div>
       <div class="s"><strong id="sCost">—</strong><span>Spent</span></div>

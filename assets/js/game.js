@@ -209,6 +209,8 @@ function renderBrief(){
     `<div class="brief-row"><span class="k">${k}</span><span class="v ${cls||""}">${v}</span></div>`).join("");
   $("budget").textContent = "/ $"+c.budget+"k target";
   $("shoreNote").textContent = "−"+SHORE_CUT+" NM to datum · +$"+SHORE_COST+"k";
+  // scenario "edge" — surface the trick up front
+  $("briefEdge").innerHTML = "<b>Edge:</b> " + scenarioEdge(c, state.mode);
   // objective strip
   const obj = $("objective");
   obj.className = "objective " + state.mode;
@@ -227,18 +229,25 @@ function renderFleet(){
     const reach = reachOneway(d);
     const canReach = reach >= D;
     const note = mode==="sar" ? d.sarNote : d.aswNote;
-    const sw = sweepWidth(d, mode, c).toFixed(2);
-    const reachFlag = canReach ? "" :
-      `<span class="reach-flag"> · ✕ range ${Math.round(reach)} NM &lt; ${Math.round(D)} NM</span>`;
+    const swv = sweepWidth(d, mode, c);
+    const reachPct = Math.min(100, reach/350*100);
+    const swPct = Math.min(100, swv/2.2*100);
+    const costPct = Math.min(100, d.cost/60*100);
+    const reachFlag = canReach ? "" : `<span class="reach-flag">✕ can't reach (${Math.round(reach)} &lt; ${Math.round(D)} NM)</span>`;
     return `<div class="drone ${canReach?'':'reachable-no'}" data-k="${k}">
-      <div class="dname"><span class="swatch" style="background:${d.color}"></span>${d.name}<span class="muted" style="font-weight:400;font-size:.78rem">· ${d.cls}</span></div>
+      <div class="dname"><span class="swatch" style="background:${d.color}"></span>${d.name}<span class="muted" style="font-weight:400;font-size:.76rem">· ${d.cls}</span></div>
       <div class="dcost">$${d.cost}k</div>
       <div class="stepper">
         <button data-act="dec" data-k="${k}" aria-label="remove ${d.name}">–</button>
         <span class="count" id="cnt-${k}">${n}</span>
         <button data-act="inc" data-k="${k}" aria-label="add ${d.name}">+</button>
       </div>
-      <div class="dspec">${d.speed} kn · ${d.endur} min · reach ${Math.round(reach)} NM · sweep ${sw} NM · ${note}${reachFlag}</div>
+      <div class="dbars">
+        <div class="dbar"><span>Reach</span><div class="track"><i class="${canReach?'':'bad'}" style="width:${reachPct}%"></i></div></div>
+        <div class="dbar"><span>Sweep</span><div class="track"><i class="son" style="width:${swPct}%"></i></div></div>
+        <div class="dbar"><span>Cost</span><div class="track"><i class="amb" style="width:${costPct}%"></i></div></div>
+      </div>
+      <div class="dspec">${note}${reachFlag}</div>
     </div>`;
   }).join("");
   $("fleet").innerHTML = html;
@@ -278,8 +287,27 @@ function renderPlan(){
     if(state.mode==="sar" && c.night) msg += " At night, thermal beats EO — lean on RANGER/SENTINEL.";
   }
   adv.textContent = msg; adv.classList.toggle("good", good);
+  // mirror live state into the always-visible bottom dock
+  $("dockPod").textContent = Math.round(a.POD*100)+"%";
+  const ds = $("dockSpent"); ds.textContent = "$"+a.cost+"k"; ds.classList.toggle("over", over);
   if(state.phase==="plan"){ drawPlanning(); updateHud(0, a); }
   return a;
+}
+
+// one-line "here's the trick" for the current scenario
+function scenarioEdge(c, mode){
+  if(mode==="sar"){
+    if(c.far && c.night) return "Far datum at night — you need long-range thermal. SENTINEL reaches it; scouts can't.";
+    if(c.far) return "Far datum — short-legged scouts burn out in transit. Buy range, or add a shore launch.";
+    if(c.night) return "Night search — thermal beats daylight cameras. Favor RANGER / SENTINEL.";
+    if(c.sea>=4) return "Rough seas clutter every sensor — lean on the widest sweep (SENTINEL).";
+    return "Close, calm datum — a cheap SCOUT swarm can blanket it for less.";
+  } else {
+    if(c.posture==="quiet") return "Silent boat — sonobuoys go deaf. Only SENTINEL's MAD boom reliably finds it.";
+    if(c.posture==="snorkel") return "Snorkeling — it's exposed to radar. Cheap RANGER swarms cover the most water per dollar.";
+    if(!c.deepLayer) return "Shallow sound layer — sonobuoys are degraded. Mix in MAD (SENTINEL).";
+    return "Boat in transit with a good sound layer — sonobuoy-heavy RANGER swarms shine.";
+  }
 }
 
 function updateHud(clockMin, a){
@@ -383,16 +411,50 @@ function drawPlanning(){
   clearStage();
   drawTransitGuides();
   drawDatum(1);                 // show the worst-case (final) drift circle while planning
-  drawShip();
-  // ghost a few drones at the ship to suggest the swarm
-  const total = ORDER.reduce((s,k)=>s+(state.loadout[k]||0),0);
-  let i=0;
-  for(const k of ORDER){
-    for(let j=0;j<(state.loadout[k]||0) && i<14;j++,i++){
-      const a = (i/Math.max(1,Math.min(total,14)))*Math.PI*2;
-      drawDrone(MAP.ship.x + Math.cos(a)*34, MAP.ship.y + Math.sin(a)*34, a, DRONES[k].color, 0.6);
+
+  const col = state.mode==="sar" ? "255,106,61" : "52,226,160";
+  const Rpx = nm(searchRadiusAt(state.c, 1));
+  const { lanes, unreachable } = laneLayout();
+
+  // PAINT the coverage your current loadout would lay over the drift circle.
+  // Fat stripes = wide sensors (SENTINEL); thin = SCOUT; none = can't reach.
+  if(lanes.length){
+    ctx.save();
+    ctx.beginPath(); ctx.arc(MAP.datum.x, MAP.datum.y, Rpx, 0, Math.PI*2); ctx.clip();
+    ctx.globalCompositeOperation = "lighter";
+    for(const ln of lanes){
+      const y = MAP.datum.y + nm(ln.yOff);
+      const h = Math.max(9, nm(ln.w));
+      const g = ctx.createLinearGradient(0, y-h/2, 0, y+h/2);
+      g.addColorStop(0, `rgba(${col},0)`); g.addColorStop(0.5, `rgba(${col},0.22)`); g.addColorStop(1, `rgba(${col},0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(MAP.datum.x - Rpx, y - h/2, Rpx*2, h);
     }
+    ctx.restore();
   }
+
+  drawShip();
+
+  // unreachable drones = wasted money: show as red stubs by the ship
+  unreachable.slice(0,4).forEach((k,i)=>{
+    label(MAP.ship.x, MAP.ship.y - 50 - i*22, "✕ "+DRONES[k].name+" can't reach", "#ff6a3d");
+  });
+
+  // big legible coverage readout under the circle
+  const a = analyze(state.loadout, state.mode, state.c, state.shore);
+  ctx.save(); ctx.textAlign = "center";
+  if(a.total > 0){
+    const pct = Math.round((1-Math.exp(-a.C))*100);
+    ctx.font = "700 34px 'JetBrains Mono', monospace";
+    ctx.fillStyle = pct>=70 ? `rgba(${col},0.95)` : (pct>=45 ? "rgba(255,176,32,0.95)" : "rgba(255,106,61,0.95)");
+    ctx.fillText(pct + "% coverage", MAP.datum.x, MAP.datum.y + Rpx + 50);
+    ctx.font = "400 16px 'JetBrains Mono', monospace"; ctx.fillStyle = "rgba(174,191,210,0.75)";
+    ctx.fillText(lanes.length + " drone" + (lanes.length===1?"":"s") + " on station   —   press DEPLOY ▸", MAP.datum.x, MAP.datum.y + Rpx + 76);
+  } else {
+    ctx.font = "400 17px 'JetBrains Mono', monospace"; ctx.fillStyle = "rgba(174,191,210,0.6)";
+    ctx.fillText("Add drones with +  to paint your search coverage", MAP.datum.x, MAP.datum.y + Rpx + 54);
+  }
+  ctx.restore();
 }
 
 function drawDrone(x,y,heading,color,scale){
@@ -414,44 +476,60 @@ let drones = [];      // active drone visual agents
 let buoys = [];       // ASW sonobuoys
 let detectAt = null;  // mission minute of detection (or null)
 let detected = false;
+let covCanvas = null, covCtx = null;   // persistent "where we've looked" heatmap
+let catchDrone = -1;                   // index of the drone that makes the find
+let shakeFrames = 0;                   // screen-shake countdown
+let modeCol = "255,106,61";            // active mode rgb for paint
+
+// shared lane layout — used by both the planning preview and the live run
+function laneLayout(){
+  const c = state.c, D = effDist(c, state.shore);
+  const list = [];
+  for(const k of ORDER){ for(let j=0;j<(state.loadout[k]||0);j++) list.push(k); }
+  const reachable = list.filter(k => reachOneway(DRONES[k]) >= D);
+  const unreachable = list.filter(k => reachOneway(DRONES[k]) < D);
+  const nR = Math.max(1, reachable.length);
+  const Rmax = searchRadiusAt(c, 1);
+  const lanes = reachable.map((k, idx) => ({
+    k, idx,
+    yOff: ((idx + 0.5)/nR - 0.5) * 2 * Rmax * 0.92,
+    w: sweepWidth(DRONES[k], state.mode, c)
+  }));
+  return { lanes, unreachable, nR, Rmax };
+}
 
 function buildDrones(){
   computeMap();
   drones = []; buoys = [];
-  const list = [];
-  for(const k of ORDER){ for(let j=0;j<(state.loadout[k]||0);j++) list.push(k); }
-  const reachable = list.filter(k => reachOneway(DRONES[k]) >= effDist(state.c, state.shore));
-  const nR = Math.max(1, reachable.length);
-  const Rmax = searchRadiusAt(state.c, 1);
-  reachable.forEach((k, idx) => {
-    const d = DRONES[k];
-    // assign a horizontal band across the drift circle
-    const band = (idx + 0.5)/nR;                       // 0..1
-    const yOff = (band - 0.5) * 2 * Rmax * 0.92;        // NM offset from datum centre
-    const launchAng = (idx/nR - 0.5) * 1.2;
+  const { lanes, Rmax } = laneLayout();
+  lanes.forEach(ln => {
+    const d = DRONES[ln.k];
     drones.push({
-      k, color:d.color, speed:d.speed,
-      x: MAP.ship.x, y: MAP.ship.y,
-      phase:"transit",
-      heading: 0,
-      yOff, band, sweepDir: 1,
-      transitDur: effDist(state.c,state.shore)/d.speed,  // hours -> we map via clock
-      launchDelay: idx * 0.5,                            // staggered launch (sim minutes-ish)
-      dropTimer: 0,
+      k: ln.k, color:d.color, speed:d.speed,
+      x: MAP.ship.x, y: MAP.ship.y, phase:"transit", heading:0,
+      yOff: ln.yOff, w: ln.w, sweepDir: 1,
+      launchDelay: ln.idx * 0.5, dropTimer: 0,
       entryX: MAP.datum.x - nm(Rmax*0.92),
-      sweepX: MAP.datum.x - nm(Rmax*0.92)
+      sweepX: MAP.datum.x - nm(Rmax*0.92),
+      minDist: Infinity
     });
   });
 }
 
 function sampleDetection(a){
+  // the POD math (1 - e^-C) stays authoritative: roll the dice...
   detected = Math.random() < a.POD;
+  catchDrone = -1;
   if(detected){
+    // ...but make it EARNED: the find is credited to the drone whose lane is
+    // nearest the (hidden) target, so the player sees a sweep pass over them.
+    const tgtY = Math.sin(state.c.tgt.ang) * state.c.tgt.rad;   // NM offset from datum
+    let best = Infinity;
+    drones.forEach((dr, i) => { const dd = Math.abs(dr.yOff - tgtY); if(dd < best){ best = dd; catchDrone = i; } });
     const minTransit = state.c.dist / 100 * 60;          // fastest drone transit, min
-    // higher coverage -> earlier detection; bias with C
-    let frac = 0.25 + 0.6*Math.pow(Math.random(), 1 + Math.min(2,a.C)*0.5);
-    detectAt = Math.max(minTransit + 4, state.c.window*frac*0.7);
-    detectAt = Math.min(detectAt, state.c.window*0.96);
+    let frac = 0.30 + 0.55*Math.pow(Math.random(), 1 + Math.min(2,a.C)*0.5);
+    detectAt = Math.max(minTransit + 5, state.c.window*frac);
+    detectAt = Math.min(detectAt, state.c.window*0.94);
   } else {
     detectAt = null;
   }
@@ -464,50 +542,67 @@ function deploy(){
 
   state.phase = "running";
   state.planAtDeploy = a;
-  $("deploy").disabled = true; $("newScenario").disabled = true;
+  setDeployEnabled(false); $("newScenario").disabled = true;
+  modeCol = state.mode==="sar" ? "255,106,61" : "52,226,160";
   buildDrones();
   sampleDetection(a);
 
+  // fresh "where we've looked" heatmap buffer
+  covCanvas = document.createElement("canvas"); covCanvas.width = W; covCanvas.height = H;
+  covCtx = covCanvas.getContext("2d");
+  shakeFrames = 0;
+
+  initAudio(); sfxLaunch();
+  runCountdown(() => startRun(a));
+}
+
+function startRun(a){
   const ANIM_MS = 15000;
-  const window = state.c.window;
-  let start = null;
-  detected = detected && detectAt!==null;
-  let detectionShown = false;
+  const win = state.c.window;
+  const tMin0 = state.c.dist / 100 * 60;       // fastest transit (min)
+  let start = null, detectionShown = false;
 
   function frame(ts){
     if(start===null) start = ts;
-    let p = (ts - start)/ANIM_MS;                 // 0..1 over animation
-    if(p>1) p = 1;
-    const clock = p * window;                     // mission minutes
+    let p = (ts - start)/ANIM_MS; if(p>1) p = 1;
+    const clock = p * win;
 
     computeMap();
-    clearStage();
+    clearStage();                                // ocean fills full canvas (unshaken)
+
+    // screen-shake on contact
+    let sdx = 0, sdy = 0;
+    if(shakeFrames > 0){ const m = shakeFrames*1.3; sdx=(Math.random()-0.5)*m; sdy=(Math.random()-0.5)*m; shakeFrames--; }
+    ctx.save(); ctx.translate(sdx, sdy);
+
     drawTransitGuides();
-    drawDatum(p);                                 // circle grows with time
+    drawDatum(p);
+    // composite the accumulated coverage heatmap, clipped to the current circle
+    if(covCanvas){
+      ctx.save();
+      ctx.beginPath(); ctx.arc(MAP.datum.x, MAP.datum.y, nm(searchRadiusAt(state.c,p)), 0, Math.PI*2); ctx.clip();
+      ctx.drawImage(covCanvas, 0, 0);
+      ctx.restore();
+    }
     drawShip();
-
-    // advance + draw drones
-    const Rmax = searchRadiusAt(state.c, 1);
-    const airborne = updateDrones(clock, p, Rmax);
-
-    // sonobuoys (ASW)
+    const airborne = updateDrones(clock, p);
     drawBuoys(clock);
 
-    // detection event
-    if(detected && !detectionShown && clock >= detectAt){
-      detectionShown = true;
-      revealTarget();
-    }
-    if(detectionShown) drawTarget();
+    if(detected && !detectionShown && clock >= detectAt){ detectionShown = true; onContact(); }
+    if(detectionShown) drawTarget(clock);
+    ctx.restore();
 
-    // HUD
+    // HUD — detection probability CLIMBS as coverage accrues (faithful to 1-e^-C)
+    const area = Math.PI*Math.pow(searchRadiusAt(state.c,p),2);
+    const prog = Math.max(0, Math.min(1, (clock - tMin0)/Math.max(1, win - tMin0)));
+    const podNow = detectionShown ? 100 : Math.round((1-Math.exp(-a.C*prog))*100);
     $("hudClock").textContent = fmtClock(clock);
     $("hudClock").className = "big clk";
-    $("hudPod").textContent = Math.round(state.planAtDeploy.POD*100)+"%";
-    $("hudArea").textContent = (Math.PI*Math.pow(searchRadiusAt(state.c,p),2)).toFixed(0)+" NM²";
+    $("hudPod").textContent = podNow + "%";
+    $("hudArea").textContent = area.toFixed(0)+" NM²";
     $("hudDrones").textContent = airborne;
 
-    if(p < 1 && !(detectionShown && clock > detectAt + 12)){
+    if(p < 1 && !(detectionShown && clock > detectAt + 10)){
       state.anim = requestAnimationFrame(frame);
     } else {
       finishMission();
@@ -516,18 +611,17 @@ function deploy(){
   state.anim = requestAnimationFrame(frame);
 }
 
-function updateDrones(clock, p, Rmax){
+function updateDrones(clock, p){
   let airborne = 0;
   const c = state.c;
-  const transitClock = k => effDist(c,state.shore)/DRONES[k].speed*60; // minutes to datum
+  const tgt = tgtScreen();
+  const transitClock = k => effDist(c,state.shore)/DRONES[k].speed*60;
   for(const dr of drones){
     const tMin = transitClock(dr.k);
-    const launchT = dr.launchDelay;
-    if(clock < launchT){ continue; }                 // not yet launched
+    if(clock < dr.launchDelay){ continue; }
     airborne++;
-    const flyT = clock - launchT;
+    const flyT = clock - dr.launchDelay;
     if(flyT < tMin){
-      // transit: interpolate ship -> entry point of its band
       const f = flyT / tMin;
       const ex = dr.entryX, ey = MAP.datum.y + nm(dr.yOff);
       dr.x = MAP.ship.x + (ex - MAP.ship.x)*ease(f);
@@ -535,43 +629,40 @@ function updateDrones(clock, p, Rmax){
       dr.heading = Math.atan2(ey-MAP.ship.y, ex-MAP.ship.x);
       dr.phase = "transit";
     } else {
-      // searching: lawnmower sweep across its band within the circle
       dr.phase = "search";
       const ey = MAP.datum.y + nm(dr.yOff);
-      // horizontal extent of circle at this band's y
-      const dy = (ey - MAP.datum.y)/MAP.s;             // NM from centre line
+      const dy = (ey - MAP.datum.y)/MAP.s;
       const half = Math.sqrt(Math.max(0, Math.pow(searchRadiusAt(c,p),2) - dy*dy));
       const left = MAP.datum.x - nm(half), right = MAP.datum.x + nm(half);
-      const sweepSpeed = (right-left) / 5.5;           // px per sim-min-ish
       dr.sweepX += dr.sweepDir * (DRONES[dr.k].speed/60) * MAP.s * 0.9;
       if(dr.sweepX > right){ dr.sweepX = right; dr.sweepDir = -1; }
       if(dr.sweepX < left){ dr.sweepX = left; dr.sweepDir = 1; }
-      if(dr.sweepX < left+1) dr.sweepX = left;
       dr.x = Math.max(left, Math.min(right, dr.sweepX));
       dr.y = ey;
       dr.heading = dr.sweepDir>0 ? 0 : Math.PI;
-      // draw sensor footprint
-      drawFootprint(dr, c);
-      // ASW: drop sonobuoys periodically
-      if(state.mode==="asw" && (DRONES[dr.k].asw.sono>0)){
+      stampCoverage(dr);                          // paint into the persistent heatmap
+      if(state.mode==="asw" && DRONES[dr.k].asw.sono>0){
         dr.dropTimer += 1;
         if(dr.dropTimer > 26){ dr.dropTimer = 0; buoys.push({x:dr.x,y:dr.y,t0:clock}); }
       }
     }
+    dr.minDist = Math.min(dr.minDist, Math.hypot(dr.x-tgt.x, dr.y-tgt.y));
     drawDrone(dr.x, dr.y, dr.heading, dr.color, 1);
   }
   return airborne;
 }
 
-function drawFootprint(dr, c){
-  const w = sweepWidth(DRONES[dr.k], state.mode, c);
-  const r = nm(w)*0.5;
-  ctx.save();
-  const col = state.mode==="sar" ? "255,106,61" : "52,226,160";
-  ctx.fillStyle = `rgba(${col},0.10)`;
-  ctx.strokeStyle = `rgba(${col},0.28)`;
-  ctx.beginPath(); ctx.arc(dr.x, dr.y, Math.max(6,r), 0, Math.PI*2); ctx.fill(); ctx.stroke();
-  ctx.restore();
+// stamp the drone's sensor footprint into the persistent coverage buffer
+function stampCoverage(dr){
+  if(!covCtx) return;
+  const r = Math.max(7, nm(dr.w)*0.62);
+  covCtx.save();
+  covCtx.globalCompositeOperation = "lighter";
+  const g = covCtx.createRadialGradient(dr.x,dr.y,0, dr.x,dr.y,r);
+  g.addColorStop(0, `rgba(${modeCol},0.07)`); g.addColorStop(1, `rgba(${modeCol},0)`);
+  covCtx.fillStyle = g;
+  covCtx.beginPath(); covCtx.arc(dr.x, dr.y, r, 0, Math.PI*2); covCtx.fill();
+  covCtx.restore();
 }
 
 function drawBuoys(clock){
@@ -587,24 +678,89 @@ function drawBuoys(clock){
   ctx.restore();
 }
 
-let targetPos = null;
-function revealTarget(){ targetPos = tgtScreen(); }
-function drawTarget(){
-  if(!targetPos) return;
-  const {x,y} = targetPos;
+function onContact(){ shakeFrames = 13; sfxPing(); }
+
+function drawTarget(clock){
+  const t = tgtScreen();
   const sar = state.mode==="sar";
   const col = sar ? "#ff6a3d" : "#34e2a0";
+  // link line from the drone that made the find
+  if(catchDrone>=0 && drones[catchDrone]){
+    const d = drones[catchDrone];
+    ctx.save(); ctx.strokeStyle = col; ctx.globalAlpha = 0.6; ctx.lineWidth = 1.4; ctx.setLineDash([5,5]);
+    ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(t.x,t.y); ctx.stroke(); ctx.restore();
+  }
+  // expanding sonar ping
+  const age = Math.max(0, clock - detectAt);
+  const rr = Math.min(70, age*24);
   ctx.save();
-  // pulse ring
-  ctx.strokeStyle = col; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(x,y, 26, 0, Math.PI*2); ctx.stroke();
-  ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 18;
-  ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle = col; ctx.globalAlpha = Math.max(0, 1 - rr/70); ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(t.x, t.y, 10+rr, 0, Math.PI*2); ctx.stroke();
   ctx.restore();
-  label(x, y-36, sar ? "★ SAILOR LOCATED" : "★ CONTACT — TRACK HELD", col);
+  // target
+  ctx.save();
+  ctx.strokeStyle = col; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(t.x,t.y, 24, 0, Math.PI*2); ctx.stroke();
+  ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 20;
+  ctx.beginPath(); ctx.arc(t.x,t.y,8,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  label(t.x, t.y-34, sar ? "★ SAILOR LOCATED" : "★ CONTACT — TRACK HELD", col);
+}
+
+// on a miss, show where the target was and whether you covered it or left a gap
+function drawMiss(){
+  const t = tgtScreen();
+  let covered = false;
+  if(covCtx){ try{ covered = covCtx.getImageData(Math.round(t.x), Math.round(t.y), 1, 1).data[3] > 14; }catch(e){} }
+  state._missCovered = covered;
+  let nd = null, best = Infinity;
+  for(const d of drones){ if(d.minDist < best){ best = d.minDist; nd = d; } }
+  ctx.save();
+  ctx.strokeStyle = "rgba(150,162,178,0.6)"; ctx.setLineDash([3,4]); ctx.lineWidth = 1.4;
+  if(nd){ ctx.beginPath(); ctx.moveTo(nd.x,nd.y); ctx.lineTo(t.x,t.y); ctx.stroke(); }
+  ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(160,172,188,0.9)";
+  ctx.beginPath(); ctx.arc(t.x,t.y,7,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle = "rgba(160,172,188,0.7)"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(t.x,t.y,16,0,Math.PI*2); ctx.stroke();
+  ctx.restore();
+  label(t.x, t.y-26, covered ? "WAS HERE — covered, but the odds missed" : "WAS HERE — a gap you never swept", "#aebfd2");
 }
 
 function ease(t){ return t<0.5 ? 2*t*t : -1+(4-2*t)*t; }
+
+/* ---- minimal WebAudio juice (synth, no files) ---- */
+let actx = null, muted = (localStorage.getItem("talon_mute")==="1");
+function initAudio(){
+  if(muted) return;
+  if(!actx){ try{ actx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ actx=null; } }
+  if(actx && actx.state==="suspended") actx.resume();
+}
+function tone(freq, dur, type, gain){
+  if(!actx || muted) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = type||"sine"; o.frequency.value = freq;
+  o.connect(g); g.connect(actx.destination);
+  const t = actx.currentTime;
+  g.gain.setValueAtTime(gain||0.05, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.start(t); o.stop(t + dur);
+}
+function sfxLaunch(){ tone(180,0.3,"sawtooth",0.04); }
+function sfxBeep(f){ tone(f,0.12,"square",0.05); }
+function sfxPing(){ tone(880,0.45,"sine",0.09); tone(1320,0.5,"sine",0.035); }
+
+function runCountdown(then){
+  const el = $("countdown");
+  let n = 3;
+  el.classList.add("show"); el.textContent = "3"; sfxBeep(440);
+  const iv = setInterval(() => {
+    n--;
+    if(n > 0){ el.textContent = String(n); sfxBeep(440); }
+    else if(n === 0){ el.textContent = "LAUNCH"; sfxBeep(680); }
+    else { clearInterval(iv); el.classList.remove("show"); then(); }
+  }, 560);
+}
 
 function flashAdvisory(msg){
   const adv = $("advisory"); const prev = adv.textContent;
@@ -673,8 +829,14 @@ let lastScore = null, lastSubmittedTs = null;
 /* ---------------------------------------------------------- *
  *  9. DEBRIEF
  * ---------------------------------------------------------- */
+function setDeployEnabled(on){
+  $("deploy").disabled = !on;
+  const dock = $("deployDock"); if(dock) dock.disabled = !on;
+}
+
 function finishMission(){
   state.phase = "done";
+  if(!detected) drawMiss();
   showBanner(detected, state.mode);
   setTimeout(()=> debrief(), 1100);
 }
@@ -688,7 +850,9 @@ function showBanner(found, mode){
   } else {
     $("bannerHead").textContent = mode==="sar" ? "SEARCH SUSPENDED" : "CONTACT LOST";
     $("bannerHead").style.color = "#ff6a3d";
-    $("bannerSub").textContent = mode==="sar" ? "The drift circle outran your coverage" : "The boat slipped the sensor field";
+    $("bannerSub").textContent = state._missCovered
+      ? "You covered the spot — the odds just missed"
+      : (mode==="sar" ? "A gap in coverage outran the search" : "The boat slipped through an unswept gap");
   }
   b.classList.add("show");
 }
@@ -726,6 +890,16 @@ function debrief(){
     cls="c"; txt = `<span class="badge">◆ UNDER-RESOURCED.</span> A smarter buy reached ~${Math.round(best.POD*100)}% within the same $${c.budget}k budget. ${tip}`;
   }
   g.className = "grade "+cls; g.innerHTML = txt;
+
+  // ---- star rating + your-plan-vs-optimal chips ----
+  let stars = 0;
+  if(found){ stars = 1; if(eff >= 0.65) stars = 2; if(eff >= 0.9 && a.cost <= c.budget + 1) stars = 3; }
+  $("stars").innerHTML = [0,1,2].map(i => `<span class="star ${i<stars?'on':''}">★</span>`).join("");
+  const chip = (lo, cls) => ORDER.filter(k=>lo[k]>0).map(k=>`<span class="chip ${cls}">${lo[k]}× ${DRONES[k].name.split('-')[0]}</span>`).join("") || `<span class="chip ${cls}">—</span>`;
+  const shoreChip = (s) => s ? `<span class="chip">+shore</span>` : "";
+  $("planChips").innerHTML =
+    `<div class="chip-row"><span class="chip-lbl">You</span>${chip(state.loadout,'you')}${shoreChip(state.shore)}</div>` +
+    `<div class="chip-row"><span class="chip-lbl">Optimal</span>${chip(best.loadout,'opt')}${shoreChip(best.shore)}</div>`;
 
   // ---- score + leaderboard submit ----
   lastScore = computeScore();
@@ -811,7 +985,7 @@ function newScenario(keepMode){
   state.shore = false; $("shore").checked = false;
   state.phase = "plan";
   $("banner").classList.remove("show");
-  $("deploy").disabled = false; $("newScenario").disabled = false;
+  setDeployEnabled(true); $("newScenario").disabled = false;
   $("hudDrones").textContent = "0";
   renderBrief(); renderFleet(); renderPlan();
 }
@@ -886,15 +1060,24 @@ $("shore").addEventListener("change", e => {
 });
 
 $("deploy").addEventListener("click", deploy);
+$("deployDock").addEventListener("click", deploy);
 $("newScenario").addEventListener("click", ()=>{ if(state.phase!=="running") newScenario(); });
 $("modeSar").addEventListener("click", ()=> setMode("sar"));
 $("modeAsw").addEventListener("click", ()=> setMode("asw"));
+
+// mute toggle
+function renderMute(){ $("mute").textContent = muted ? "🔇 Sound off" : "🔊 Sound on"; }
+$("mute").addEventListener("click", ()=>{
+  muted = !muted; localStorage.setItem("talon_mute", muted?"1":"0");
+  if(!muted) initAudio();
+  renderMute();
+});
 
 $("replay").addEventListener("click", ()=>{
   $("modalBack").classList.remove("show");
   $("banner").classList.remove("show");
   state.phase = "plan";
-  $("deploy").disabled = false; $("newScenario").disabled = false;
+  setDeployEnabled(true); $("newScenario").disabled = false;
   renderPlan();
 });
 $("nextScenario").addEventListener("click", ()=>{
@@ -913,6 +1096,7 @@ $("lbBack").addEventListener("click", e => { if(e.target===$("lbBack")) $("lbBac
 
 // how to play
 $("howto").addEventListener("click", openHowTo);
+$("howtoInline").addEventListener("click", openHowTo);
 $("htpClose").addEventListener("click", closeHowTo);
 $("htpStart").addEventListener("click", closeHowTo);
 $("htpBack").addEventListener("click", e => { if(e.target===$("htpBack")) closeHowTo(); });
@@ -921,6 +1105,7 @@ $("htpBack").addEventListener("click", e => { if(e.target===$("htpBack")) closeH
  *  12. BOOT
  * ---------------------------------------------------------- */
 setMode("sar");
+renderMute();
 // show the rules automatically on a player's first visit
 if(!localStorage.getItem("talon_seen_htp")) openHowTo();
 

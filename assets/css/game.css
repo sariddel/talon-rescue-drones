@@ -217,3 +217,84 @@
 
 .score-box .score-sub span.pos { color:var(--sonar); }
 .score-box .score-sub span.neg { color:var(--rescue); }
+
+/* ============================================================
+   v2 — layout fixes, coverage preview, juice, stars/chips
+   ============================================================ */
+
+/* --- layout: stop the canvas eating the fold; keep Deploy reachable --- */
+.sim-shell { padding-top: 16px; padding-bottom: 86px; }   /* room for fixed dock */
+.sim-head { margin-bottom: 14px; }
+#stage { max-height: calc(100vh - 210px); }
+.linklike { background:none; border:none; color:var(--ice); font: inherit; cursor:pointer; padding:0; text-decoration:underline; }
+.linklike:hover { color:var(--ice-soft); }
+
+/* steppers: more clickable */
+.stepper button { width:34px; height:34px; }
+.stepper button:hover { background:rgba(52,226,160,0.10); }
+.stepper .count { border:1px solid var(--hairline); border-radius:6px; font-weight:600; padding:2px 0; }
+
+/* CTA weighting: Deploy dominates, New scenario shrinks */
+.sim-actions #newScenario { flex:0 0 auto; }
+.sim-actions #deploy { flex:1; }
+
+/* numbered step badges on cards */
+.step-badge { display:inline-grid; place-items:center; width:18px; height:18px; border-radius:50%;
+  background:rgba(52,226,160,0.15); border:1px solid rgba(52,226,160,0.4); color:var(--sonar);
+  font-size:.64rem; margin-right:7px; vertical-align:middle; }
+
+/* scenario "edge" callout in the briefing */
+.brief-edge { margin-top:12px; font-size:.84rem; color:var(--ice-soft); font-family:var(--mono); line-height:1.5;
+  padding:10px 12px; border-left:2px solid var(--sonar); background:rgba(52,226,160,0.06); border-radius:0 6px 6px 0; }
+.brief-edge b { color:var(--sonar); }
+
+/* reach / sweep / cost bars per drone */
+.dbars { grid-column:1 / -1; display:flex; gap:12px; margin-top:2px; }
+.dbar { flex:1; display:flex; align-items:center; gap:6px; }
+.dbar > span { font-family:var(--mono); font-size:.58rem; color:var(--ink-faint); width:32px; text-transform:uppercase; letter-spacing:.05em; }
+.dbar .track { flex:1; height:5px; background:rgba(255,255,255,0.06); border-radius:3px; overflow:hidden; }
+.dbar .track i { display:block; height:100%; background:var(--ice); }
+.dbar .track i.son { background:var(--sonar); }
+.dbar .track i.amb { background:var(--amber); }
+.dbar .track i.bad { background:var(--rescue); }
+.drone .dspec .reach-flag { color:var(--rescue); }
+
+/* always-visible bottom action dock */
+.action-dock { position:fixed; left:0; right:0; bottom:0; z-index:40;
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+  padding:10px max(20px, calc((100vw - var(--maxw))/2 + 20px));
+  background:linear-gradient(0deg, var(--abyss), rgba(6,13,24,0.9));
+  border-top:1px solid var(--hairline-2); backdrop-filter:blur(10px); }
+.action-dock .dock-info { font-family:var(--mono); font-size:.86rem; color:var(--ink-soft); }
+.action-dock .dock-stat b { color:var(--sonar); font-size:1.05rem; }
+.action-dock #dockSpent.over { color:var(--rescue); }
+.action-dock .dock-sep { color:var(--ink-faint); margin:0 8px; }
+.action-dock #deployDock { padding:12px 26px; flex:none; }
+.action-dock #deployDock[disabled]{ opacity:.4; }
+
+/* launch countdown overlay */
+.countdown { position:absolute; inset:0; display:none; align-items:center; justify-content:center; pointer-events:none; z-index:6;
+  font-family:var(--mono); font-weight:700; font-size:clamp(3rem,12vw,7rem); color:var(--sonar);
+  text-shadow:0 0 40px rgba(52,226,160,0.6); letter-spacing:.05em; }
+.countdown.show { display:flex; animation:cdpop .56s ease; }
+@keyframes cdpop { 0%{transform:scale(.55);opacity:0} 45%{opacity:1} 100%{transform:scale(1.08);opacity:.85} }
+
+/* debrief: verdict row + stars + plan-vs-optimal chips */
+.verdict-row { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.stars { font-size:1.6rem; letter-spacing:5px; white-space:nowrap; }
+.stars .star { color:rgba(255,255,255,0.14); }
+.stars .star.on { color:var(--amber); text-shadow:0 0 12px rgba(255,176,32,0.6); }
+.plan-chips { margin:14px 0 18px; display:flex; flex-direction:column; gap:8px; }
+.chip-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.chip-lbl { font-family:var(--mono); font-size:.62rem; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-faint); width:54px; }
+.chip { font-family:var(--mono); font-size:.74rem; padding:3px 9px; border-radius:999px; border:1px solid var(--hairline-2); color:var(--ink-soft); }
+.chip.you { border-color:rgba(255,176,32,0.4); color:var(--amber); background:rgba(255,176,32,0.07); }
+.chip.opt { border-color:rgba(52,226,160,0.4); color:var(--sonar); background:rgba(52,226,160,0.07); }
+
+/* mobile: controls first, map preview below */
+@media (max-width:980px){
+  .sim-grid { display:flex; flex-direction:column; }
+  .rail { order:1; }
+  .stage-wrap { order:2; }
+  #stage { max-height:46vh; }
+}
