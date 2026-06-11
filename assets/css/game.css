@@ -298,3 +298,28 @@
   .stage-wrap { order:2; }
   #stage { max-height:46vh; }
 }
+
+/* ============================================================
+   v3 — range slider, manual toggle, compact rail
+   ============================================================ */
+.range-row { margin:12px 0 2px; }
+.range-head { display:flex; justify-content:space-between; align-items:baseline; font-size:.82rem; color:var(--ink-soft); margin-bottom:8px; }
+.range-head .mono { color:var(--ice); font-size:.9rem; }
+.rng { -webkit-appearance:none; appearance:none; width:100%; height:6px; border-radius:3px; margin:0;
+  background:linear-gradient(90deg, var(--sonar), var(--amber)); outline:none; cursor:pointer; }
+.rng::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:19px; height:19px; border-radius:50%;
+  background:var(--ink); border:2px solid var(--sonar); cursor:pointer; box-shadow:0 2px 7px rgba(0,0,0,.55); }
+.rng::-moz-range-thumb { width:19px; height:19px; border-radius:50%; background:var(--ink); border:2px solid var(--sonar); cursor:pointer; }
+.range-hint { font-family:var(--mono); font-size:.72rem; margin-top:7px; }
+.range-hint.good { color:var(--sonar); } .range-hint.warn { color:var(--amber); } .range-hint.bad { color:var(--rescue); }
+
+/* compact the config rail so there's less scrolling */
+.rail { gap:12px; }
+.card { padding:14px 16px; }
+.card h3 { margin-bottom:10px; }
+.brief-row { padding:5px 0; font-size:.86rem; }
+.brief-edge { margin-top:10px; padding:9px 11px; font-size:.8rem; }
+.fleet { gap:8px; }
+.drone { padding:10px; gap:5px 12px; }
+.toggle-row { padding:8px 0; }
+.objective { padding:10px 14px; margin-bottom:14px; font-size:.9rem; }

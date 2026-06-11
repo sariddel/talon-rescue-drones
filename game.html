@@ -99,11 +99,27 @@
         <div class="card">
           <h3><span class="step-badge">1</span> Field your swarm <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400;font-size:.72rem;">— add with +, watch coverage</span></h3>
           <div class="fleet" id="fleet"></div>
-          <div class="toggle-row" style="margin-top:6px;">
+
+          <div class="range-row">
+            <div class="range-head">
+              <span>Drone reach beyond ship</span>
+              <span class="mono" id="rangeVal">45 NM</span>
+            </div>
+            <input type="range" id="rangeSlider" class="rng" min="15" max="95" step="1" value="45" />
+            <div class="range-hint" id="rangeHint"></div>
+          </div>
+
+          <div class="toggle-row">
             <div class="tlabel">Forward shore launch
               <small id="shoreNote">−18 NM to datum · +$22k</small>
             </div>
             <label class="switch"><input type="checkbox" id="shore"><span class="slot"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="tlabel">Manual steering
+              <small>point on the map to hunt yourself</small>
+            </div>
+            <label class="switch"><input type="checkbox" id="manual"><span class="slot"></span></label>
           </div>
         </div>
 
@@ -213,6 +229,8 @@
       <h4>The optimization — what wins</h4>
       <ul>
         <li><b>Coverage is everything.</b> Detection rises with how much sensor area you sweep over the search circle.</li>
+        <li><b>Set your reach.</b> The <b>Drone reach</b> slider sets how far the drones push out — aim it at the datum distance in the briefing. Too short misses entirely; too far thins your coverage.</li>
+        <li><b>Manual steering</b> (toggle on): after deploy, point or drag anywhere on the ocean and your drones hunt where you aim — find the target yourself before the clock runs out.</li>
         <li><b>Far datum?</b> Cheap short-legged SCOUTs burn their fuel just getting there — buy range (RANGER / SENTINEL) or add a forward shore launch.</li>
         <li><b>Night?</b> Thermal beats daylight cameras — lean on RANGER / SENTINEL.</li>
         <li><b>Silent submarine?</b> Sonobuoys go deaf — only SENTINEL's MAD boom finds it. <b>Snorkeling?</b> It's exposed to radar — cheap swarms work.</li>

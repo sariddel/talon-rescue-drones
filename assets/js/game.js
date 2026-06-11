@@ -57,15 +57,29 @@ function sweepWidth(d, mode, c){
   }
 }
 
-function effDist(c, shore){ return Math.max(8, c.dist - (shore ? SHORE_CUT : 0)); }
+// the player-configured push-out range (NM); falls back to state.range, then datum
+function curRange(c, range){
+  if(range != null) return range;
+  if(typeof state !== "undefined" && state && state.range != null) return state.range;
+  return c.dist;
+}
+function effDist(c, shore, range){
+  return Math.max(8, curRange(c, range) - (shore ? SHORE_CUT : 0));
+}
 
 function searchRadiusAt(c, frac){ return c.r0 + c.grow * (c.window*frac/60); }
 
-// returns full plan analytics for a loadout
-function analyze(loadout, mode, c, shore){
-  const D = effDist(c, shore);
+// returns full plan analytics for a loadout at a chosen push-out range
+function analyze(loadout, mode, c, shore, range){
+  const rng = curRange(c, range);
+  const D = effDist(c, shore, rng);
   const Rmid = c.r0 + c.grow*(c.window/60)/2;
   const A = Math.PI*Rmid*Rmid;
+  // how well the search reach is aimed at the datum
+  const under = Math.max(0, c.dist - rng);             // reach falls short of the datum
+  const over  = Math.max(0, rng - c.dist);             // pushed past the datum
+  const aim = Math.max(0, 1 - under/Rmid);             // miss entirely if short by > drift radius
+  const dilution = 1 + over/Math.max(22, c.dist);      // over-extension thins coverage
   let swept=0, reachable=0, total=0, cost = shore ? SHORE_COST : 0;
   const perType = {};
   for(const k of ORDER){
@@ -79,12 +93,13 @@ function analyze(loadout, mode, c, shore){
     reachable += n;
     swept += n * (perType[k].sweep * d.speed * (tos/60) * EFF);
   }
+  swept *= aim / dilution;
   const C = swept / A;
   const POD = 1 - Math.exp(-C);
-  return { D, A, Rmid, C, POD, cost, reachable, total, perType };
+  return { D, A, Rmid, C, POD, cost, reachable, total, perType, aim, rng };
 }
 
-// brute-force best achievable POD within budget — used to grade the player
+// brute-force best achievable POD within budget — graded against optimal aim (range = datum)
 function bestPlan(mode, c){
   let best = { POD:0, cost:0, loadout:{scout:0,ranger:0,sentinel:0}, shore:false };
   for(let shore=0; shore<2; shore++){
@@ -92,7 +107,7 @@ function bestPlan(mode, c){
     for(let r=0; r<=MAXN.ranger; r++)
     for(let n=0; n<=MAXN.sentinel; n++){
       const lo = {scout:s, ranger:r, sentinel:n};
-      const a = analyze(lo, mode, c, !!shore);
+      const a = analyze(lo, mode, c, !!shore, c.dist);
       if(a.cost > c.budget) continue;
       if(a.POD > best.POD + 1e-9 || (Math.abs(a.POD-best.POD)<1e-9 && a.cost<best.cost)){
         best = { POD:a.POD, cost:a.cost, loadout:lo, shore:!!shore };
@@ -164,6 +179,8 @@ const state = {
   c: null,
   loadout: { scout:0, ranger:0, sentinel:0 },
   shore: false,
+  range: null,          // player-configured push-out range (NM)
+  manual: (localStorage.getItem("talon_manual")==="1"),
   phase: "plan",        // plan | running | done
   anim: null
 };
@@ -219,6 +236,18 @@ function renderBrief(){
   } else {
     obj.innerHTML = `<span class="tag">Objective</span><span><b>Detect and track the submarine</b> before it slips the search area (~${Math.round(c.window)} min). Field whatever it takes — efficiency near the <b>$${c.budget}k</b> target wins the leaderboard.</span>`;
   }
+}
+
+function renderRange(){
+  const c = state.c;
+  $("rangeSlider").value = state.range;
+  $("rangeVal").textContent = state.range + " NM";
+  const datum = Math.round(c.dist);
+  const Rd = c.r0 + c.grow*(c.window/60)/2;
+  const h = $("rangeHint");
+  if(state.range < datum - Rd){ h.textContent = "✕ short of the datum (~"+datum+" NM) — push out further"; h.className = "range-hint bad"; }
+  else if(state.range > datum + Rd*1.4){ h.textContent = "⚠ past the datum (~"+datum+" NM) — coverage thins out here"; h.className = "range-hint warn"; }
+  else { h.textContent = "✓ aimed at the datum (~"+datum+" NM)"; h.className = "range-hint good"; }
 }
 
 function renderFleet(){
@@ -326,13 +355,44 @@ function computeMap(){
   const c = state.c;
   const margin = 120;
   const Rmax = searchRadiusAt(c, 1);
-  const D = effDist(c, state.shore);
-  const sx = (W - 2*margin) / (D + Rmax);
+  const rng = curRange(c, null);
+  const farNM = Math.max(c.dist, rng) + Rmax;          // fit datum AND search reach
+  const sx = (W - 2*margin) / farNM;
   const sy = (H/2 - margin) / (Rmax + 4);
   const s = Math.min(sx, sy);
-  const ship = { x: margin, y: H/2 };
-  const datum = { x: margin + D*s, y: H/2 };
-  MAP = { s, ship, datum, Rmax };
+  const ship = { x: margin + steamOffset*s, y: H/2 };  // steaming nudges the ship forward
+  const datum = { x: margin + c.dist*s, y: H/2 };       // where the target actually is
+  const search = { x: margin + rng*s, y: H/2 };         // where your drones push out to
+  MAP = { s, ship, datum, search, Rmax };
+}
+let steamOffset = 0;   // NM the ship has steamed this run
+let manualPt = null;   // where the player is steering the swarm (canvas coords)
+
+function drawManualCursor(){
+  if(!manualPt) return;
+  const col = state.mode==="sar" ? "#ff6a3d" : "#34e2a0";
+  ctx.save();
+  ctx.strokeStyle = col; ctx.globalAlpha = 0.85; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.arc(manualPt.x, manualPt.y, 16, 0, Math.PI*2); ctx.stroke();
+  const m = manualPt;
+  ctx.beginPath();
+  ctx.moveTo(m.x-22,m.y); ctx.lineTo(m.x-8,m.y); ctx.moveTo(m.x+8,m.y); ctx.lineTo(m.x+22,m.y);
+  ctx.moveTo(m.x,m.y-22); ctx.lineTo(m.x,m.y-8); ctx.moveTo(m.x,m.y+8); ctx.lineTo(m.x,m.y+22);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function setManualFromEvent(e){
+  if(!state.manual || state.phase!=="running" || !MAP.ship) return;
+  const rect = canvas.getBoundingClientRect();
+  const src = (e.touches && e.touches[0]) ? e.touches[0] : e;
+  let x = (src.clientX - rect.left)/rect.width * W;
+  let y = (src.clientY - rect.top)/rect.height * H;
+  // clamp to the drones' reach bubble around the ship
+  const maxR = nm(curRange(state.c,null) + searchRadiusAt(state.c,1));
+  const dx = x-MAP.ship.x, dy = y-MAP.ship.y, dd = Math.hypot(dx,dy);
+  if(dd > maxR){ x = MAP.ship.x + dx/dd*maxR; y = MAP.ship.y + dy/dd*maxR; }
+  manualPt = { x, y };
 }
 
 function nm(v){ return v * MAP.s; }
@@ -359,6 +419,17 @@ function clearStage(){
 
 function drawShip(){
   const {x,y} = MAP.ship;
+  // steaming wake
+  if(steamOffset > 0.4){
+    ctx.save();
+    const wlen = Math.min(90, nm(steamOffset));
+    const g = ctx.createLinearGradient(x-wlen, y, x, y);
+    g.addColorStop(0, "rgba(143,199,255,0)"); g.addColorStop(1, "rgba(143,199,255,0.32)");
+    ctx.strokeStyle = g; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x-wlen, y-3); ctx.lineTo(x-6, y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x-wlen, y+3); ctx.lineTo(x-6, y); ctx.stroke();
+    ctx.restore();
+  }
   ctx.save();
   ctx.translate(x,y);
   // hull
@@ -405,54 +476,66 @@ function drawTransitGuides(){
   ctx.restore();
 }
 
+function drawReach(){
+  // dashed vector ship -> search center, and the search ring you can cover
+  const Rpx = nm(searchRadiusAt(state.c, 1));
+  ctx.save();
+  ctx.setLineDash([6,7]); ctx.strokeStyle = "rgba(143,199,255,0.5)"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(MAP.ship.x, MAP.ship.y); ctx.lineTo(MAP.search.x, MAP.search.y); ctx.stroke();
+  ctx.strokeStyle = "rgba(143,199,255,0.45)";
+  ctx.beginPath(); ctx.arc(MAP.search.x, MAP.search.y, Rpx, 0, Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+  label(MAP.search.x, MAP.search.y + Rpx + 22, "SEARCH REACH · " + Math.round(curRange(state.c,null)) + " NM", "#8fc7ff");
+}
+
 function drawPlanning(){
   if(!state.c) return;
   computeMap();
   clearStage();
   drawTransitGuides();
-  drawDatum(1);                 // show the worst-case (final) drift circle while planning
+  drawDatum(1);                 // target drift circle (amber) at the datum
+  drawReach();                  // your search reach (blue) at the chosen range
 
   const col = state.mode==="sar" ? "255,106,61" : "52,226,160";
   const Rpx = nm(searchRadiusAt(state.c, 1));
   const { lanes, unreachable } = laneLayout();
 
-  // PAINT the coverage your current loadout would lay over the drift circle.
-  // Fat stripes = wide sensors (SENTINEL); thin = SCOUT; none = can't reach.
+  // PAINT the coverage your loadout lays over the SEARCH ring (where the drones go)
   if(lanes.length){
     ctx.save();
-    ctx.beginPath(); ctx.arc(MAP.datum.x, MAP.datum.y, Rpx, 0, Math.PI*2); ctx.clip();
+    ctx.beginPath(); ctx.arc(MAP.search.x, MAP.search.y, Rpx, 0, Math.PI*2); ctx.clip();
     ctx.globalCompositeOperation = "lighter";
     for(const ln of lanes){
-      const y = MAP.datum.y + nm(ln.yOff);
+      const y = MAP.search.y + nm(ln.yOff);
       const h = Math.max(9, nm(ln.w));
       const g = ctx.createLinearGradient(0, y-h/2, 0, y+h/2);
       g.addColorStop(0, `rgba(${col},0)`); g.addColorStop(0.5, `rgba(${col},0.28)`); g.addColorStop(1, `rgba(${col},0)`);
       ctx.fillStyle = g;
-      ctx.fillRect(MAP.datum.x - Rpx, y - h/2, Rpx*2, h);
+      ctx.fillRect(MAP.search.x - Rpx, y - h/2, Rpx*2, h);
     }
     ctx.restore();
   }
 
   drawShip();
-
-  // unreachable drones = wasted money: show as red stubs by the ship
   unreachable.slice(0,4).forEach((k,i)=>{
     label(MAP.ship.x, MAP.ship.y - 50 - i*22, "✕ "+DRONES[k].name+" can't reach", "#ff6a3d");
   });
 
-  // big legible coverage readout under the circle
   const a = analyze(state.loadout, state.mode, state.c, state.shore);
+  const yText = MAP.datum.y + Rpx + 50;
   ctx.save(); ctx.textAlign = "center";
   if(a.total > 0){
     const pct = Math.round((1-Math.exp(-a.C))*100);
     ctx.font = "700 34px 'JetBrains Mono', monospace";
     ctx.fillStyle = pct>=70 ? `rgba(${col},0.95)` : (pct>=45 ? "rgba(255,176,32,0.95)" : "rgba(255,106,61,0.95)");
-    ctx.fillText(pct + "% coverage", MAP.datum.x, MAP.datum.y + Rpx + 50);
+    ctx.fillText(pct + "% coverage", (MAP.datum.x+MAP.search.x)/2, yText);
     ctx.font = "400 16px 'JetBrains Mono', monospace"; ctx.fillStyle = "rgba(174,191,210,0.75)";
-    ctx.fillText(lanes.length + " drone" + (lanes.length===1?"":"s") + " on station   —   press DEPLOY ▸", MAP.datum.x, MAP.datum.y + Rpx + 76);
+    const aimMsg = a.aim < 0.6 ? "⚠ reach not aligned with the datum" : (state.manual ? "MANUAL — you'll steer the search" : "press DEPLOY ▸");
+    ctx.fillText(lanes.length + " drone" + (lanes.length===1?"":"s") + "   —   " + aimMsg, (MAP.datum.x+MAP.search.x)/2, yText+26);
   } else {
     ctx.font = "400 17px 'JetBrains Mono', monospace"; ctx.fillStyle = "rgba(174,191,210,0.6)";
-    ctx.fillText("Add drones with +  to paint your search coverage", MAP.datum.x, MAP.datum.y + Rpx + 54);
+    ctx.fillText("Add drones with +  ·  set your reach to the datum", (MAP.datum.x+MAP.search.x)/2, yText);
   }
   ctx.restore();
 }
@@ -509,8 +592,8 @@ function buildDrones(){
       x: MAP.ship.x, y: MAP.ship.y, phase:"transit", heading:0,
       yOff: ln.yOff, w: ln.w, sweepDir: 1,
       launchDelay: ln.idx * 0.5, dropTimer: 0,
-      entryX: MAP.datum.x - nm(Rmax*0.92),
-      sweepX: MAP.datum.x - nm(Rmax*0.92),
+      entryX: MAP.search.x - nm(Rmax*0.92),
+      sweepX: MAP.search.x - nm(Rmax*0.92),
       minDist: Infinity
     });
   });
@@ -544,8 +627,10 @@ function deploy(){
   state.planAtDeploy = a;
   setDeployEnabled(false); $("newScenario").disabled = true;
   modeCol = state.mode==="sar" ? "255,106,61" : "52,226,160";
+  steamOffset = 0;
   buildDrones();
-  sampleDetection(a);
+  if(state.manual){ detected=false; detectAt=null; catchDrone=-1; manualPt = { x: MAP.search.x, y: MAP.search.y }; }
+  else sampleDetection(a);
 
   // fresh "where we've looked" heatmap buffer
   covCanvas = document.createElement("canvas"); covCanvas.width = W; covCanvas.height = H;
@@ -567,7 +652,10 @@ function startRun(a){
     let p = (ts - start)/ANIM_MS; if(p>1) p = 1;
     const clock = p * win;
 
+    // the ship steams forward (≈20 kn), capped so it doesn't overrun the datum
+    steamOffset = Math.min(state.c.dist*0.42, 20*(clock/60));
     computeMap();
+    if(state.manual && !manualPt) manualPt = { x: MAP.search.x, y: MAP.search.y };
     clearStage();                                // ocean fills full canvas (unshaken)
 
     // screen-shake on contact
@@ -577,18 +665,32 @@ function startRun(a){
 
     drawTransitGuides();
     drawDatum(p);
-    // composite the accumulated coverage heatmap, clipped to the current circle
+    // composite coverage heatmap (clipped wide so manual sweeps anywhere show)
     if(covCanvas){
       ctx.save();
-      ctx.beginPath(); ctx.arc(MAP.datum.x, MAP.datum.y, nm(searchRadiusAt(state.c,p)), 0, Math.PI*2); ctx.clip();
+      const cx = state.manual ? MAP.search.x : MAP.search.x;
+      ctx.beginPath(); ctx.arc(cx, MAP.search.y, nm(searchRadiusAt(state.c,p)) + (state.manual?nm(state.c.dist):0), 0, Math.PI*2); ctx.clip();
       ctx.drawImage(covCanvas, 0, 0);
       ctx.restore();
     }
+    if(state.manual && state.phase==="running") drawManualCursor();
     drawShip();
     const airborne = updateDrones(clock, p);
     drawBuoys(clock);
 
-    if(detected && !detectionShown && clock >= detectAt){ detectionShown = true; onContact(); }
+    // MANUAL: detection is geometric — a drone actually reaching the target finds it
+    if(state.manual && !detectionShown){
+      const t = tgtScreen();
+      const aim = manualPt ? Math.hypot(manualPt.x-t.x, manualPt.y-t.y) : 1e9;
+      for(let i=0;i<drones.length;i++){
+        const dr = drones[i];
+        const r = nm(Math.max(2.4, dr.w*1.5));
+        // a drone reaches the target, OR you're aiming right at it with the swarm on station
+        if(Math.hypot(dr.x-t.x, dr.y-t.y) < r || (aim < nm(2.2) && Math.hypot(dr.x-t.x,dr.y-t.y) < nm(6))){
+          detected = true; detectAt = clock; catchDrone = i; detectionShown = true; onContact(); break;
+        }
+      }
+    } else if(detected && !detectionShown && clock >= detectAt){ detectionShown = true; onContact(); }
     if(detectionShown) drawTarget(clock);
     ctx.restore();
 
@@ -598,7 +700,7 @@ function startRun(a){
     const podNow = detectionShown ? 100 : Math.round((1-Math.exp(-a.C*prog))*100);
     $("hudClock").textContent = fmtClock(clock);
     $("hudClock").className = "big clk";
-    $("hudPod").textContent = podNow + "%";
+    $("hudPod").textContent = state.manual ? (detectionShown ? "FOUND" : "HUNT") : podNow + "%";
     $("hudArea").textContent = area.toFixed(0)+" NM²";
     $("hudDrones").textContent = airborne;
 
@@ -616,31 +718,45 @@ function updateDrones(clock, p){
   const c = state.c;
   const tgt = tgtScreen();
   const transitClock = k => effDist(c,state.shore)/DRONES[k].speed*60;
+  const manual = state.manual && state.phase==="running";
   for(const dr of drones){
     const tMin = transitClock(dr.k);
     if(clock < dr.launchDelay){ continue; }
     airborne++;
     const flyT = clock - dr.launchDelay;
-    if(flyT < tMin){
+    if(flyT < tMin && !manual){
       const f = flyT / tMin;
-      const ex = dr.entryX, ey = MAP.datum.y + nm(dr.yOff);
+      const ex = dr.entryX, ey = MAP.search.y + nm(dr.yOff);
       dr.x = MAP.ship.x + (ex - MAP.ship.x)*ease(f);
       dr.y = MAP.ship.y + (ey - MAP.ship.y)*ease(f);
       dr.heading = Math.atan2(ey-MAP.ship.y, ex-MAP.ship.x);
       dr.phase = "transit";
+    } else if(manual){
+      // MANUAL: drones converge on where you point, spread into a small formation
+      dr.phase = "search";
+      const ang = (dr._slot==null) ? (dr._slot = Math.random()*Math.PI*2) : dr._slot;
+      const spread = nm(Math.max(0.7, dr.w*0.8));
+      const tx = manualPt.x + Math.cos(ang)*spread, ty = manualPt.y + Math.sin(ang)*spread;
+      const sp = DRONES[dr.k].speed/60 * MAP.s * 1.4;
+      const dx = tx-dr.x, dy = ty-dr.y, dd = Math.hypot(dx,dy)||1;
+      const step = Math.min(dd, sp);
+      dr.x += dx/dd*step; dr.y += dy/dd*step;
+      dr.heading = Math.atan2(dy,dx);
+      stampCoverage(dr);
+      if(state.mode==="asw" && DRONES[dr.k].asw.sono>0){ dr.dropTimer++; if(dr.dropTimer>26){dr.dropTimer=0; buoys.push({x:dr.x,y:dr.y,t0:clock});} }
     } else {
       dr.phase = "search";
-      const ey = MAP.datum.y + nm(dr.yOff);
-      const dy = (ey - MAP.datum.y)/MAP.s;
+      const ey = MAP.search.y + nm(dr.yOff);
+      const dy = (ey - MAP.search.y)/MAP.s;
       const half = Math.sqrt(Math.max(0, Math.pow(searchRadiusAt(c,p),2) - dy*dy));
-      const left = MAP.datum.x - nm(half), right = MAP.datum.x + nm(half);
+      const left = MAP.search.x - nm(half), right = MAP.search.x + nm(half);
       dr.sweepX += dr.sweepDir * (DRONES[dr.k].speed/60) * MAP.s * 0.9;
       if(dr.sweepX > right){ dr.sweepX = right; dr.sweepDir = -1; }
       if(dr.sweepX < left){ dr.sweepX = left; dr.sweepDir = 1; }
       dr.x = Math.max(left, Math.min(right, dr.sweepX));
       dr.y = ey;
       dr.heading = dr.sweepDir>0 ? 0 : Math.PI;
-      stampCoverage(dr);                          // paint into the persistent heatmap
+      stampCoverage(dr);
       if(state.mode==="asw" && DRONES[dr.k].asw.sono>0){
         dr.dropTimer += 1;
         if(dr.dropTimer > 26){ dr.dropTimer = 0; buoys.push({x:dr.x,y:dr.y,t0:clock}); }
@@ -987,11 +1103,13 @@ function newScenario(keepMode){
   state.c = genScenario(state.mode);
   state.loadout = { scout:0, ranger:0, sentinel:0 };
   state.shore = false; $("shore").checked = false;
+  state.range = Math.round(state.c.dist);   // sensible default: aimed at the datum
   state.phase = "plan";
   $("banner").classList.remove("show");
   setDeployEnabled(true); $("newScenario").disabled = false;
   $("hudDrones").textContent = "0";
-  renderBrief(); renderFleet(); renderPlan();
+  $("manual").checked = state.manual;
+  renderBrief(); renderRange(); renderFleet(); renderPlan();
 }
 
 function setMode(mode){
@@ -1063,8 +1181,24 @@ $("shore").addEventListener("change", e => {
   renderBrief(); renderFleet(); renderPlan();
 });
 
+$("rangeSlider").addEventListener("input", e => {
+  state.range = parseInt(e.target.value, 10);
+  renderRange(); renderFleet(); renderPlan();   // reach flags + coverage depend on range
+});
+
+$("manual").addEventListener("change", e => {
+  state.manual = e.target.checked;
+  localStorage.setItem("talon_manual", state.manual ? "1" : "0");
+  renderPlan();
+});
+
 $("deploy").addEventListener("click", deploy);
 $("deployDock").addEventListener("click", deploy);
+
+// manual steering — point/drag on the canvas
+canvas.addEventListener("pointermove", setManualFromEvent);
+canvas.addEventListener("pointerdown", setManualFromEvent);
+canvas.addEventListener("touchmove", e => { setManualFromEvent(e); if(state.manual && state.phase==="running") e.preventDefault(); }, { passive:false });
 $("newScenario").addEventListener("click", ()=>{ if(state.phase!=="running") newScenario(); });
 $("modeSar").addEventListener("click", ()=> setMode("sar"));
 $("modeAsw").addEventListener("click", ()=> setMode("asw"));
