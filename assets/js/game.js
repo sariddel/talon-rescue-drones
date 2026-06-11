@@ -426,7 +426,7 @@ function drawPlanning(){
       const y = MAP.datum.y + nm(ln.yOff);
       const h = Math.max(9, nm(ln.w));
       const g = ctx.createLinearGradient(0, y-h/2, 0, y+h/2);
-      g.addColorStop(0, `rgba(${col},0)`); g.addColorStop(0.5, `rgba(${col},0.22)`); g.addColorStop(1, `rgba(${col},0)`);
+      g.addColorStop(0, `rgba(${col},0)`); g.addColorStop(0.5, `rgba(${col},0.28)`); g.addColorStop(1, `rgba(${col},0)`);
       ctx.fillStyle = g;
       ctx.fillRect(MAP.datum.x - Rpx, y - h/2, Rpx*2, h);
     }
@@ -572,7 +572,7 @@ function startRun(a){
 
     // screen-shake on contact
     let sdx = 0, sdy = 0;
-    if(shakeFrames > 0){ const m = shakeFrames*1.3; sdx=(Math.random()-0.5)*m; sdy=(Math.random()-0.5)*m; shakeFrames--; }
+    if(shakeFrames > 0){ const m = shakeFrames*0.85; sdx=(Math.random()-0.5)*m; sdy=(Math.random()-0.5)*m; shakeFrames--; }
     ctx.save(); ctx.translate(sdx, sdy);
 
     drawTransitGuides();
@@ -602,7 +602,7 @@ function startRun(a){
     $("hudArea").textContent = area.toFixed(0)+" NM²";
     $("hudDrones").textContent = airborne;
 
-    if(p < 1 && !(detectionShown && clock > detectAt + 10)){
+    if(p < 1 && !(detectionShown && clock > detectAt + 14)){
       state.anim = requestAnimationFrame(frame);
     } else {
       finishMission();
@@ -659,7 +659,7 @@ function stampCoverage(dr){
   covCtx.save();
   covCtx.globalCompositeOperation = "lighter";
   const g = covCtx.createRadialGradient(dr.x,dr.y,0, dr.x,dr.y,r);
-  g.addColorStop(0, `rgba(${modeCol},0.07)`); g.addColorStop(1, `rgba(${modeCol},0)`);
+  g.addColorStop(0, `rgba(${modeCol},0.09)`); g.addColorStop(1, `rgba(${modeCol},0)`);
   covCtx.fillStyle = g;
   covCtx.beginPath(); covCtx.arc(dr.x, dr.y, r, 0, Math.PI*2); covCtx.fill();
   covCtx.restore();
@@ -678,7 +678,7 @@ function drawBuoys(clock){
   ctx.restore();
 }
 
-function onContact(){ shakeFrames = 13; sfxPing(); }
+function onContact(){ shakeFrames = 9; sfxPing(); }
 
 function drawTarget(clock){
   const t = tgtScreen();
@@ -844,9 +844,13 @@ function finishMission(){
 function showBanner(found, mode){
   const b = $("banner");
   if(found){
-    $("bannerHead").textContent = mode==="sar" ? "SAILOR RECOVERED" : "CONTACT HELD";
-    $("bannerHead").style.color = mode==="sar" ? "#ff6a3d" : "#34e2a0";
-    $("bannerSub").textContent = mode==="sar" ? "GPS marker dropped · helo vectored in" : "Track established · destroyer cued";
+    const spare = state.c.window - detectAt;
+    const close = spare < state.c.window*0.2;
+    $("bannerHead").textContent = close ? "CLOSE CALL" : (mode==="sar" ? "SAILOR RECOVERED" : "CONTACT HELD");
+    $("bannerHead").style.color = close ? "#ffb020" : (mode==="sar" ? "#ff6a3d" : "#34e2a0");
+    $("bannerSub").textContent = close
+      ? "Found with " + Math.round(spare) + " min to spare"
+      : (mode==="sar" ? "GPS marker dropped · helo vectored in" : "Track established · destroyer cued");
   } else {
     $("bannerHead").textContent = mode==="sar" ? "SEARCH SUSPENDED" : "CONTACT LOST";
     $("bannerHead").style.color = "#ff6a3d";
